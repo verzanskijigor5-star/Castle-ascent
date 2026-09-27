@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>Castle Ascent v2</title>
+<style>
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;overflow:hidden;background:#0b1019;color:#fff;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+#app{height:100vh;height:100dvh;display:flex;flex-direction:column}
+header{flex:0 0 68px;padding:8px 12px;display:flex;align-items:center;justify-content:space-between;background:#111827;border-bottom:1px solid #28344a}
+.brand{font-weight:900;font-size:18px}.sub{font-size:12px;color:#9aa7bd}
+.stats{display:flex;gap:6px}.pill{padding:7px 9px;border-radius:999px;background:#1c2738;border:1px solid #34425a;font-size:13px}
+#game{position:relative;flex:1;min-height:0;overflow:hidden;background:
+radial-gradient(circle at 20% 15%,rgba(50,84,140,.28),transparent 30%),
+radial-gradient(circle at 80% 78%,rgba(116,46,101,.23),transparent 28%),
+linear-gradient(#172033,#0e1521)}
+#paths{position:absolute;inset:0;width:100%;height:100%;z-index:1;pointer-events:none}
+#castles{position:absolute;inset:0;z-index:3}
+.castle{position:absolute;width:82px;height:92px;transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;justify-content:center;user-select:none}
+.icon{font-size:46px;line-height:1;filter:drop-shadow(0 5px 7px #0008)}
+.count{margin-top:2px;background:#0b0f17e8;border:2px solid #789;border-radius:999px;padding:2px 8px;font-weight:900;font-size:15px;min-width:40px;text-align:center}
+.player .count{border-color:#4b9cff}.enemy .count{border-color:#ff5368}.neutral .count{border-color:#aab2c0}.boss .count{border-color:#ffd35c}
+.castle.selected{outline:3px solid #fff;outline-offset:-2px;border-radius:50%}
+.lv{position:absolute;right:1px;top:1px;font-size:11px;padding:2px 5px;background:#101827;border:1px solid #43516b;border-radius:6px}
+.army{position:absolute;z-index:10;width:31px;height:31px;border-radius:50%;transform:translate(-50%,-50%);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:900;border:2px solid #fff;box-shadow:0 3px 8px #0009}
+.army.player{background:#247cff}.army.enemy{background:#e83c52}
+footer{flex:0 0 136px;padding:10px 12px calc(10px + env(safe-area-inset-bottom));display:grid;grid-template-columns:1fr 1fr;gap:8px;background:#111827;border-top:1px solid #28344a}
+button{border:0;border-radius:12px;padding:10px 8px;font-size:14px;font-weight:800;color:white;background:#2c70e8}
+button.alt{background:#2a3547} button.gold{background:#92720e}
+#status{grid-column:1/-1;text-align:center;font-size:12px;color:#c6d0df;min-height:16px}
+#overlay{position:absolute;inset:0;z-index:50;background:#05080dcc;display:none;align-items:center;justify-content:center;padding:20px}
+.card{width:min(340px,90vw);background:#151e2d;border:1px solid #3a4963;border-radius:18px;padding:22px;text-align:center}
+.row{display:flex;gap:8px}.row button{flex:1}
+#error{position:absolute;left:8px;right:8px;top:8px;z-index:100;display:none;background:#7b1d29;color:white;border-radius:10px;padding:8px;font-size:12px}
+</style>
+</head>
+<body>
+<div id="app">
+<header>
+  <div><div class="brand">🏰 CASTLE ASCENT</div><div class="sub">Захвати 100 уровней</div></div>
+  <div class="stats"><div class="pill">Ур. <b id="levelText">1</b>/100</div><div class="pill">💰 <b id="goldText">0</b></div></div>
+</header>
+<main id="game">
+  <div id="error"></div>
+  <svg id="paths"></svg>
+  <div id="castles"></div>
+  <div id="overlay"><div class="card"><h2 id="overlayTitle">Победа</h2><p id="overlayText"></p><div class="row"><button id="nextBtn">Дальше</button><button id="retryBtn" class="alt">Повторить</button></div></div></div>
+</main>
+<footer>
+  <button id="send50">⚔️ Отправить 50%</button>
+  <button id="sendAll" class="alt">⚔️ Отправить всё</button>
+  <button id="upgrade" class="gold">⬆️ Улучшить замок</button>
+  <button id="restart" class="alt">↻ Перезапуск</button>
+  <div id="status">Нажми на свой синий замок.</div>
+</footer>
+</div>
+<script>
+(function(){
+'use strict';
+
+var mem = {level:1,gold:0};
+function getSaved(key, fallback){
+  try{
+    var v = window.localStorage ? localStorage.getItem(key) : null;
+    return v===null ? fallback : Number(v);
+  }catch(e){ return fallback; }
+}
+function setSaved(key,val){
+  try{ if(window.localStorage) localStorage.setItem(key,String(val)); }catch(e){}
+}
+function showError(msg){
+  var e=document.getElementById('error'); e.textContent=msg; e.style.display='block';
+}
+window.onerror=function(m){ showError('Ошибка: '+m); };
+
+var game=document.getElementById('game');
+var castlesEl=document.getElementById('castles');
+var svg=document.getElementById('paths');
+var statusEl=document.getElementById('status');
+var levelText=document.getElementById('levelText');
+var goldText=document.getElementById('goldText');
+var overlay=document.getElementById('overlay');
+var overlayTitle=document.getElementById('overlayTitle');
+var overlayText=document.getElementById('overlayText');
+var nextBtn=document.getElementById('nextBtn');
+
+var level=getSaved('ca_level',1);
+var gold=getSaved('ca_gold',0);
+if(!isFinite(level)||level<1||level>100) level=1;
+if(!isFinite(gold)||gold<0) gold=0;
+
+var castles=[], armies=[], selected=null, target=null, running=true;
+var last=Date.now(), prodAcc=0, aiAcc=0;
+
+function save(){ setSaved('ca_level',level); setSaved('ca_gold',gold); }
+function clamp(v,a,b){return Math.max(a,Math.min(b,v));}
+function distance(a,b){return Math.hypot(a.x-b.x,a.y-b.y);}
+function status(s){statusEl.textContent=s;}
+
+function makeLevel(n){
+  castles=[]; armies=[]; selected=null; target=null; running=true;
+  overlay.style.display='none';
+
+  var count=clamp(4+Math.floor((n-1)/8),4,16);
+  var cols=n<25?2:(n<60?3:4);
+
+  castles.push({id:0,owner:'player',x:50,y:88,troops:24+Math.floor(n/5),level:1,max:70,prod:1,defense:1});
+
+  for(var i=1;i<count-1;i++){
+    var row=Math.floor((i-1)/cols), col=(i-1)%cols;
+    var rows=Math.ceil((count-2)/cols);
+    var y=(rows<=1)?52:(75-row*(52/(rows-1)));
+    var xs=cols===2?[32,68]:(cols===3?[20,50,80]:[14,38,62,86]);
+    var x=xs[col%xs.length];
+    var owner=(Math.random()<clamp(.25+n/180,.25,.72))?'enemy':'neutral';
+    castles.push({id:i,owner:owner,x:x,y:y,troops:Math.floor(12+n*.45+Math.random()*(12+n*.15)),level:1+Math.floor(n/30),max:70+Math.floor(n/10)*5,prod:1+Math.floor(n/35),defense:1+Math.floor(n/40)*.1});
+  }
+  castles.push({id:count-1,owner:'enemy',x:50,y:10,troops:Math.floor(32+n*1.1),level:1+Math.floor(n/20),max:120+n,prod:1+Math.floor(n/25),defense:1.15+n*.004,boss:true});
+  renderAll();
+  status('Уровень '+n+': захвати красные замки и корону наверху.');
+}
+
+function emoji(c){
+  if(c.boss&&c.owner==='enemy') return '👑';
+  if(c.owner==='player') return '🏰';
+  if(c.owner==='enemy') return '🏯';
+  return '🏚️';
+}
+
+function renderPaths(){
+  while(svg.firstChild) svg.removeChild(svg.firstChild);
+  var w=game.clientWidth,h=game.clientHeight;
+  for(var i=0;i<castles.length;i++){
+    var c=castles[i];
+    var cand=castles.filter(function(o){return o.id!==c.id && Math.abs(o.y-c.y)<32 && Math.abs(o.y-c.y)>2;})
+      .sort(function(a,b){return distance(c,a)-distance(c,b);}).slice(0,2);
+    for(var j=0;j<cand.length;j++){
+      var o=cand[j]; if(c.id>o.id) continue;
+      var line=document.createElementNS('http://www.w3.org/2000/svg','line');
+      line.setAttribute('x1',c.x/100*w);line.setAttribute('y1',c.y/100*h);
+      line.setAttribute('x2',o.x/100*w);line.setAttribute('y2',o.y/100*h);
+      line.setAttribute('stroke','#657691');line.setAttribute('stroke-width','4');line.setAttribute('opacity','.35');line.setAttribute('stroke-linecap','round');
+      svg.appendChild(line);
+    }
+  }
+}
+
+function renderAll(){
+  castlesEl.innerHTML='';
+  renderPaths();
+  for(var i=0;i<castles.length;i++){
+    (function(c){
+      var el=document.createElement('div');
+      el.className='castle '+c.owner+(c.boss?' boss':'')+(selected===c.id?' selected':'');
+      el.style.left=c.x+'%';el.style.top=c.y+'%';
+      el.innerHTML='<div class="lv">Lv.'+c.level+'</div><div class="icon">'+emoji(c)+'</div><div class="count">'+Math.floor(c.troops)+'</div>';
+      el.addEventListener('click',function(){clickCastle(c.id);});
+      el.addEventListener('touchend',function(ev){ev.preventDefault();clickCastle(c.id);},{passive:false});
+      castlesEl.appendChild(el);
+    })(castles[i]);
+  }
+  levelText.textContent=level; goldText.textContent=gold;
+}
+
+function clickCastle(id){
+  var c=castles[id];
+  if(c.owner==='player'){
+    selected=id; target=null;
+    status('Выбран замок: '+Math.floor(c.troops)+' солдат. Теперь выбери цель.');
+  }else if(selected!==null){
+    target=id;
+    status('Цель: '+Math.floor(c.troops)+' солдат. Нажми кнопку отправки.');
+  }else status('Сначала нажми на свой синий замок.');
+  renderAll();
+}
+
+function sendArmy(p){
+  if(selected===null||target===null){status('Сначала выбери свой замок, потом цель.');return;}
+  var from=castles[selected],to=castles[target];
+  if(from.owner!=='player') return;
+  var n=Math.floor(from.troops*p);
+  if(n<1){status('Недостаточно солдат.');return;}
+  from.troops-=n;
+  armies.push({owner:'player',count:n,x:from.x,y:from.y,tx:to.x,ty:to.y,target:to.id,speed:18+level*.04});
+  status('Отправлено '+n+' солдат.');
+  renderAll();
+}
+
+function enemySend(from,to,p){
+  var n=Math.floor(from.troops*p);
+  if(n<4)return;
+  from.troops-=n;
+  armies.push({owner:'enemy',count:n,x:from.x,y:from.y,tx:to.x,ty:to.y,target:to.id,speed:16+level*.05});
+}
+
+function ai(){
+  var en=castles.filter(function(c){return c.owner==='enemy'&&c.troops>18;});
+  if(!en.length)return;
+  var from=en[Math.floor(Math.random()*en.length)];
+  var tg=castles.filter(function(c){return c.owner!=='enemy';}).sort(function(a,b){return distance(from,a)-distance(from,b);});
+  if(!tg.length)return;
+  if(from.troops>tg[0].troops*tg[0].defense*.8||Math.random()<.3) enemySend(from,tg[0],.5);
+}
+
+function arrive(a){
+  var c=castles[a.target];
+  if(c.owner===a.owner){c.troops=Math.min(c.max,c.troops+a.count);return;}
+  var def=c.troops*c.defense;
+  if(a.count>def){
+    c.owner=a.owner;c.troops=Math.max(1,Math.round(a.count-def));
+    if(a.owner==='player'){gold+=c.boss?250+level*10:40+level*2;save();}
+  }else c.troops=Math.max(0,c.troops-a.count/c.defense);
+}
+
+function updateArmies(dt){
+  var old=document.querySelectorAll('.army');
+  for(var z=0;z<old.length;z++) old[z].remove();
+  var w=game.clientWidth,h=game.clientHeight;
+  for(var i=armies.length-1;i>=0;i--){
+    var a=armies[i],dx=a.tx-a.x,dy=a.ty-a.y,d=Math.sqrt(dx*dx+dy*dy),step=a.speed*dt;
+    if(d<=step){a.x=a.tx;a.y=a.ty;arrive(a);armies.splice(i,1);continue;}
+    a.x+=dx/d*step;a.y+=dy/d*step;
+    var el=document.createElement('div');el.className='army '+a.owner;el.textContent=a.count;
+    el.style.left=(a.x/100*w)+'px';el.style.top=(a.y/100*h)+'px';game.appendChild(el);
+  }
+}
+
+function produce(){
+  for(var i=0;i<castles.length;i++){
+    var c=castles[i];if(c.owner==='neutral')continue;
+    var rate=c.prod*(c.owner==='enemy'?(1+level*.004):1);
+    c.troops=Math.min(c.max,c.troops+rate);
+  }
+}
+
+function checkEnd(){
+  var enemy=castles.some(function(c){return c.owner==='enemy';})||armies.some(function(a){return a.owner==='enemy';});
+  var player=castles.some(function(c){return c.owner==='player';})||armies.some(function(a){return a.owner==='player';});
+  if(!enemy&&running){
+    running=false;gold+=100+level*5;
+    if(level<100){level++;save();overlayTitle.textContent='ПОБЕДА 👑';overlayText.textContent='Открыт уровень '+level+'.';nextBtn.style.display='block';}
+    else{save();overlayTitle.textContent='100 УРОВНЕЙ ПРОЙДЕНО 👑';overlayText.textContent='Ты захватил всю империю!';nextBtn.style.display='none';}
+    goldText.textContent=gold;overlay.style.display='flex';
+  }else if(!player&&running){
+    running=false;overlayTitle.textContent='ПОРАЖЕНИЕ';overlayText.textContent='Все твои замки захвачены.';nextBtn.style.display='none';overlay.style.display='flex';
+  }
+}
+
+function upgrade(){
+  if(selected===null){status('Выбери свой замок.');return;}
+  var c=castles[selected],cost=100*c.level;
+  if(c.owner!=='player')return;
+  if(gold<cost){status('Нужно '+cost+' золота.');return;}
+  gold-=cost;c.level++;c.max+=30;c.prod++;c.defense+=.1;save();renderAll();status('Замок улучшен до Lv.'+c.level+'.');
+}
+
+document.getElementById('send50').onclick=function(){sendArmy(.5);};
+document.getElementById('sendAll').onclick=function(){sendArmy(.95);};
+document.getElementById('upgrade').onclick=upgrade;
+document.getElementById('restart').onclick=function(){makeLevel(level);};
+document.getElementById('retryBtn').onclick=function(){makeLevel(level);};
+nextBtn.onclick=function(){makeLevel(level);};
+
+function frame(){
+  var now=Date.now(),dt=Math.min(.05,(now-last)/1000);last=now;
+  if(running){
+    prodAcc+=dt;aiAcc+=dt;
+    if(prodAcc>=1){prodAcc=0;produce();renderAll();}
+    if(aiAcc>=2.7){aiAcc=0;ai();}
+    updateArmies(dt);checkEnd();
+  }
+  requestAnimationFrame(frame);
+}
+
+setTimeout(function(){
+  try{
+    makeLevel(level);
+    requestAnimationFrame(frame);
+  }catch(e){showError(String(e&&e.message?e.message:e));}
+},50);
+
+window.addEventListener('resize',function(){try{renderAll();}catch(e){}});
+})();
+</script>
+</body>
+</html>
